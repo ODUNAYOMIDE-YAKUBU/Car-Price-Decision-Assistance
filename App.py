@@ -30,7 +30,6 @@ MODEL_PATH = os.path.join(BASE_DIR, MODEL_FILENAME)
 # Your direct download URL
 MODEL_URL = "https://drive.google.com/uc?export=download&id=1g_atyU9dC-R_7Ace7O07x9_lqehKfzfz"
 
-
 def _download_file_from_gdrive(url: str, dest_path: str) -> None:
     """
     Downloads large files from Google Drive by handling the 'download_warning' token.
@@ -102,36 +101,20 @@ def looks_like_html(path: str) -> bool:
 @st.cache_resource
 def load_model():
     # Download if missing
-    if not os.path.exists(MODEL_PATH):
-        st.info("Model not found locally. Downloading from Google Drive... ⏳")
-        download_from_gdrive(MODEL_URL, MODEL_PATH)
-        st.success("Model downloaded successfully ✅")
-
-    # Show file size
-    size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
-    st.write(f"Downloaded model size: **{size_mb:.2f} MB**")
-
-    # Check if download is actually HTML instead of binary file
     if looks_like_html(MODEL_PATH):
-        st.error(
-            "Downloaded file is HTML (Google Drive confirmation page), not a real .joblib model.\n\n"
-            "Fix: Make the Drive file 'Anyone with the link (Viewer)' and reboot the app."
-        )
-        st.stop()
-
-    # Try loading
+    # Delete the bad file so the next reboot triggers a fresh download
     try:
-        model = joblib.load(MODEL_PATH)
-        st.success("Model loaded successfully ✅")
-        return model
-    except Exception as e:
-        st.error("joblib.load() failed while loading the model.")
-        st.code(repr(e))
-        st.stop()
+        os.remove(MODEL_PATH)
+    except Exception:
+        pass
 
+    st.error(
+        "Downloaded file is HTML (Google Drive confirmation page), not a real .joblib model.\n\n"
+        "Fix: Make the Drive file 'Anyone with the link (Viewer)' and reboot the app."
+    )
+    st.stop()
 
 rf_model = load_model()
-
 # Final safety check
 if not hasattr(rf_model, "predict"):
     st.error(f"Loaded object is not a model. Type: {type(rf_model)}")
@@ -255,4 +238,5 @@ if st.button("Evaluate Price 🚀"):
         st.error("Prediction failed. This usually means your model expects different input columns.")
         st.code(str(e))
         st.stop()
+
 
