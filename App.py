@@ -61,36 +61,80 @@ def _download_file_from_gdrive(url: str, dest_path: str) -> None:
                 f.write(chunk)
 
 
+def download_from_gdrive(url: str, dest_path: str) -> None:
+    """
+    Downloads large files from Google Drive by handling the 'download_warning' token.
+    """
+    session = requests.Session()
+    resp = session.get(url, stream=True, timeout=180)
+    resp.raise_for_status()
+
+    token = None
+    for k, v in resp.cookies.items():
+        if k.startswith("download_warning"):
+            token = v
+            break
+
+    if token:
+        confirm_url = url + "&confirm=" + token
+        resp = session.get(confirm_url, stream=True, timeout=180)
+        resp.raise_for_status()
+
+    with open(dest_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+
+
+def looks_like_html(path: str) -> bool:
+    """
+    Google Drive sometimes returns an HTML confirmation page instead of the file.
+    This detects that case.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(512)
+        return b"<html" in head.lower() or b"<!doctype html" in head.lower()
+    except Exception:
+        return False
+
+
 @st.cache_resource
 def load_model():
-    """
-    Loads the model from local disk if available; otherwise downloads it from Google Drive.
-    Cached so it downloads only once per deployment/restart.
-    """
-    if os.path.exists(MODEL_PATH):
-        model = joblib.load(MODEL_PATH)
-        return model
-
-    st.info("Model not found locally. Downloading from Google Drive... ⏳")
-
-    try:
-        _download_file_from_gdrive(MODEL_URL, MODEL_PATH)
+    # Download if missing
+    if not os.path.exists(MODEL_PATH):
+        st.info("Model not found locally. Downloading from Google Drive... ⏳")
+        download_from_gdrive(MODEL_URL, MODEL_PATH)
         st.success("Model downloaded successfully ✅")
 
-        model = joblib.load(MODEL_PATH)
-        return model
+    # Show file size
+    size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
+    st.write(f"Downloaded model size: **{size_mb:.2f} MB**")
 
+    # Check if download is actually HTML instead of binary file
+    if looks_like_html(MODEL_PATH):
+        st.error(
+            "Downloaded file is HTML (Google Drive confirmation page), not a real .joblib model.\n\n"
+            "Fix: Make the Drive file 'Anyone with the link (Viewer)' and reboot the app."
+        )
+        st.stop()
+
+    # Try loading
+    try:
+        model = joblib.load(MODEL_PATH)
+        st.success("Model loaded successfully ✅")
+        return model
     except Exception as e:
-        st.error("Failed to download or load the model.")
-        st.code(str(e))
+        st.error("joblib.load() failed while loading the model.")
+        st.code(repr(e))
         st.stop()
 
 
 rf_model = load_model()
 
-# Safety guard
+# Final safety check
 if not hasattr(rf_model, "predict"):
-    st.error(f"Loaded object is not a trained model. Loaded type: {type(rf_model)}")
+    st.error(f"Loaded object is not a model. Type: {type(rf_model)}")
     st.stop()
 
 
@@ -211,3 +255,4 @@ if st.button("Evaluate Price 🚀"):
         st.error("Prediction failed. This usually means your model expects different input columns.")
         st.code(str(e))
         st.stop()
+
