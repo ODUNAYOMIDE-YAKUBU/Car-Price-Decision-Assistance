@@ -103,10 +103,10 @@ def load_model():
     # Download if missing
     if looks_like_html(MODEL_PATH):
     # Delete the bad file so the next reboot triggers a fresh download
-    try:
-        os.remove(MODEL_PATH)
-    except Exception:
-        pass
+        try:
+            os.remove(MODEL_PATH)
+        except Exception:
+            pass
 
     st.error(
         "Downloaded file is HTML (Google Drive confirmation page), not a real .joblib model.\n\n"
@@ -238,5 +238,6 @@ if st.button("Evaluate Price 🚀"):
         st.error("Prediction failed. This usually means your model expects different input columns.")
         st.code(str(e))
         st.stop()
+
 
 
