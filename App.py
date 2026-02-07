@@ -20,44 +20,14 @@ st.caption("Predict fair car price and get a Buy | Negotiate | Avoid decision.")
 
 
 # -----------------------------
-# Google Drive model download
+# Model download settings
 # -----------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 MODEL_FILENAME = "car_price_prediction_model.joblib"
 MODEL_PATH = os.path.join(BASE_DIR, MODEL_FILENAME)
 
-# Your direct download URL
 MODEL_URL = "https://drive.google.com/uc?export=download&id=1g_atyU9dC-R_7Ace7O07x9_lqehKfzfz"
-
-def _download_file_from_gdrive(url: str, dest_path: str) -> None:
-    """
-    Downloads large files from Google Drive by handling the 'download_warning' token.
-    """
-    session = requests.Session()
-
-    # First request
-    response = session.get(url, stream=True, timeout=180)
-    response.raise_for_status()
-
-    # Check for confirmation token in cookies
-    token = None
-    for k, v in response.cookies.items():
-        if k.startswith("download_warning"):
-            token = v
-            break
-
-    # If token exists, confirm download
-    if token:
-        url = url + "&confirm=" + token
-        response = session.get(url, stream=True, timeout=180)
-        response.raise_for_status()
-
-    # Write to file
-    with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB
-            if chunk:
-                f.write(chunk)
 
 
 def download_from_gdrive(url: str, dest_path: str) -> None:
@@ -65,59 +35,97 @@ def download_from_gdrive(url: str, dest_path: str) -> None:
     Downloads large files from Google Drive by handling the 'download_warning' token.
     """
     session = requests.Session()
+
+    # First request
     resp = session.get(url, stream=True, timeout=180)
     resp.raise_for_status()
 
+    # Look for Google Drive confirmation token
     token = None
     for k, v in resp.cookies.items():
         if k.startswith("download_warning"):
             token = v
             break
 
+    # Confirm download if token exists
     if token:
         confirm_url = url + "&confirm=" + token
         resp = session.get(confirm_url, stream=True, timeout=180)
         resp.raise_for_status()
 
+    # Save file
     with open(dest_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
             if chunk:
                 f.write(chunk)
 
 
 def looks_like_html(path: str) -> bool:
     """
-    Google Drive sometimes returns an HTML confirmation page instead of the file.
-    This detects that case.
+    Detects if the downloaded file is an HTML page (Drive confirmation/permission page)
+    instead of a real binary .joblib file.
     """
     try:
         with open(path, "rb") as f:
             head = f.read(512)
-        return b"<html" in head.lower() or b"<!doctype html" in head.lower()
+        head_lower = head.lower()
+        return (b"<html" in head_lower) or (b"<!doctype html" in head_lower)
     except Exception:
         return False
 
 
 @st.cache_resource
 def load_model():
+    """
+    Load model from disk, otherwise download it from Google Drive.
+    Caches model so it doesn't reload/download every rerun.
+    """
     # Download if missing
-    if looks_like_html(MODEL_PATH):
-    # Delete the bad file so the next reboot triggers a fresh download
+    if not os.path.exists(MODEL_PATH):
+        st.info("Model not found locally. Downloading from Google Drive... ⏳")
+        download_from_gdrive(MODEL_URL, MODEL_PATH)
+        st.success("Model downloaded successfully ✅")
+
+    # Show file size
+    try:
+        size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
+    except Exception:
+        size_mb = 0.0
+
+    st.write(f"Downloaded model size: **{size_mb:.2f} MB**")
+
+    # If download is HTML, delete and stop (forces fresh download after permission fix)
+    if looks_like_html(MODEL_PATH) or size_mb < 1.0:
         try:
             os.remove(MODEL_PATH)
         except Exception:
             pass
 
-    st.error(
-        "Downloaded file is HTML (Google Drive confirmation page), not a real .joblib model.\n\n"
-        "Fix: Make the Drive file 'Anyone with the link (Viewer)' and reboot the app."
-    )
-    st.stop()
+        st.error(
+            "Downloaded file is HTML (Google Drive confirmation/permission page), not a real .joblib model.\n\n"
+            "✅ Fix:\n"
+            "1) Open the model file in Google Drive\n"
+            "2) Share → General access → set to **Anyone with the link (Viewer)**\n"
+            "3) Save, then reboot the Streamlit app"
+        )
+        st.stop()
+
+    # Try loading model
+    try:
+        model = joblib.load(MODEL_PATH)
+        st.success("Model loaded successfully ✅")
+        return model
+    except Exception as e:
+        st.error("joblib.load() failed while loading the model.")
+        st.code(repr(e))
+        st.stop()
+
 
 rf_model = load_model()
+
 # Final safety check
 if not hasattr(rf_model, "predict"):
-    st.error(f"Loaded object is not a model. Type: {type(rf_model)}")
+    st.error(f"Loaded object is not a trained model. Loaded type: {type(rf_model)}")
     st.stop()
 
 
@@ -146,7 +154,7 @@ st.subheader("🧾 Enter Car Details")
 
 col1, col2 = st.columns(2)
 
-# Brand + Model (dropdown if CSV uploaded, else manual)
+# Brand + Model
 if df is not None and "brand" in df.columns and "model" in df.columns:
     brand_list = sorted(df["brand"].dropna().astype(str).unique().tolist())
     brand = col1.selectbox("Brand", brand_list)
@@ -154,6 +162,7 @@ if df is not None and "brand" in df.columns and "model" in df.columns:
     model_list = sorted(df.loc[df["brand"] == brand, "model"].dropna().astype(str).unique().tolist())
     if len(model_list) == 0:
         model_list = sorted(df["model"].dropna().astype(str).unique().tolist())
+
     model = col2.selectbox("Model", model_list)
 else:
     brand = col1.text_input("Brand (e.g., hyundai)", value="hyundai").strip().lower()
@@ -196,8 +205,6 @@ def decision_rule(asking: float, predicted: float, tolerance: float = 0.10) -> s
 st.divider()
 
 if st.button("Evaluate Price 🚀"):
-
-    # Defensive checks
     if engine == 0:
         st.error("Engine cannot be 0.")
         st.stop()
@@ -205,7 +212,7 @@ if st.button("Evaluate Price 🚀"):
     power_per_cc = float(max_power) / float(engine)
     log_km_driven = float(np.log1p(km_driven))
 
-    # IMPORTANT: input_df must match training schema
+    # IMPORTANT: must match training schema
     input_df = pd.DataFrame({
         "brand": [brand],
         "model": [model],
@@ -225,7 +232,6 @@ if st.button("Evaluate Price 🚀"):
     try:
         pred_log = rf_model.predict(input_df)[0]
         predicted_price = float(np.expm1(pred_log))
-
         decision = decision_rule(asking_price, predicted_price, tolerance=0.10)
 
         st.success("Prediction Complete ✅")
@@ -235,9 +241,6 @@ if st.button("Evaluate Price 🚀"):
         st.write(decision)
 
     except Exception as e:
-        st.error("Prediction failed. This usually means your model expects different input columns.")
+        st.error("Prediction failed. This usually means the model expects different input columns.")
         st.code(str(e))
         st.stop()
-
-
-
