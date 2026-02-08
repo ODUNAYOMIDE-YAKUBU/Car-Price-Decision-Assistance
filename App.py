@@ -92,6 +92,35 @@ def load_model():
 
 rf_model = load_model()
 
+# -----------------------------
+# Sidebar: Model information
+# -----------------------------
+with st.sidebar:
+    st.header("ℹ️ Model Info")
+
+    with st.expander("How the prediction works", expanded=False):
+        st.markdown("""
+        - **Model:** Random Forest Regressor  
+        - **Target:** log(selling_price)  
+        - **Feature engineering:**  
+          - power_per_cc = max_power / engine  
+          - log_km_driven = log1p(km_driven)  
+        """)
+
+    with st.expander("Decision rules", expanded=False):
+        st.markdown("""
+        - ✅ **Strong Buy:** asking < 90% of predicted value  
+        - 🟦 **Fairly Priced:** within ±10% of predicted value  
+        - ⚠️ **Overpriced:** asking > 110% of predicted value  
+        """)
+
+    with st.expander("Deployment notes", expanded=False):
+        st.markdown("""
+        - Model is downloaded at runtime and cached  
+        - Environment is pinned for compatibility  
+        """)
+
+
 # Final safety check
 if not hasattr(rf_model, "predict"):
     st.error(f"Loaded object is not a trained model. Loaded type: {type(rf_model)}")
@@ -150,7 +179,7 @@ max_power = st.number_input("Max Power (bhp)", min_value=20.0, max_value=1000.0,
 
 seats = st.selectbox("Seats", [2, 4, 5, 6, 7, 8, 9, 10], index=2)
 
-asking_price = st.number_input("Asking Price (₦)", min_value=0, max_value=50_000_000, value=500_000, step=10_000)
+asking_price = st.number_input("Asking Price ($)", min_value=0, max_value=50_000_000, value=500_000, step=10_000)
 
 
 # -----------------------------
@@ -204,8 +233,8 @@ if st.button("Evaluate Price 🚀"):
         decision = decision_rule(asking_price, predicted_price, tolerance=0.10)
 
         st.success("Prediction Complete ✅")
-        st.metric("Predicted Fair Price", f"₦{predicted_price:,.0f}")
-        st.metric("Your Asking Price", f"₦{asking_price:,.0f}")
+        st.metric("Predicted Fair Price", f"${predicted_price:,.0f}")
+        st.metric("Your Asking Price", f"${asking_price:,.0f}")
         st.write("### Decision")
         st.write(decision)
 
@@ -213,4 +242,5 @@ if st.button("Evaluate Price 🚀"):
         st.error("Prediction failed. This usually means the model expects different input columns.")
         st.code(str(e))
         st.stop()
+
 
