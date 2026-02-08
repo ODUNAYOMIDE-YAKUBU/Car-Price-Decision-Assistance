@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import requests
-
+import gdown
 
 # -----------------------------
 # Page config
@@ -27,96 +27,65 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILENAME = "car_price_prediction_model.joblib"
 MODEL_PATH = os.path.join(BASE_DIR, MODEL_FILENAME)
 
-MODEL_URL = "https://drive.google.com/uc?export=download&id=1g_atyU9dC-R_7Ace7O07x9_lqehKfzfz"
-
-
-def download_from_gdrive(url: str, dest_path: str) -> None:
-    """
-    Downloads large files from Google Drive by handling the 'download_warning' token.
-    """
-    session = requests.Session()
-
-    # First request
-    resp = session.get(url, stream=True, timeout=180)
-    resp.raise_for_status()
-
-    # Look for Google Drive confirmation token
-    token = None
-    for k, v in resp.cookies.items():
-        if k.startswith("download_warning"):
-            token = v
-            break
-
-    # Confirm download if token exists
-    if token:
-        confirm_url = url + "&confirm=" + token
-        resp = session.get(confirm_url, stream=True, timeout=180)
-        resp.raise_for_status()
-
-    # Save file
-    with open(dest_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
-            if chunk:
-                f.write(chunk)
-
+#MODEL_URL = "https://drive.google.com/uc?export=download&id=1g_atyU9dC-R_7Ace7O07x9_lqehKfzfz"
+FILE_ID = "1g_atyU9dC-R_7Ace7O07x9_lqehKfzfz"
+GDRIVE_URL = f"https://drive.google.com/uc?id={FILE_ID}"
 
 def looks_like_html(path: str) -> bool:
-    """
-    Detects if the downloaded file is an HTML page (Drive confirmation/permission page)
-    instead of a real binary .joblib file.
-    """
     try:
         with open(path, "rb") as f:
-            head = f.read(512)
-        head_lower = head.lower()
-        return (b"<html" in head_lower) or (b"<!doctype html" in head_lower)
+            head = f.read(512).lower()
+        return b"<html" in head or b"<!doctype html" in head
     except Exception:
         return False
 
 
 @st.cache_resource
 def load_model():
-    """
-    Load model from disk, otherwise download it from Google Drive.
-    Caches model so it doesn't reload/download every rerun.
-    """
     # Download if missing
     if not os.path.exists(MODEL_PATH):
         st.info("Model not found locally. Downloading from Google Drive... ⏳")
-        download_from_gdrive(MODEL_URL, MODEL_PATH)
+
+        # gdown will handle the big-file "Download anyway" confirmation
+        out = gdown.download(GDRIVE_URL, MODEL_PATH, quiet=False)
+
+        if out is None or not os.path.exists(MODEL_PATH):
+            st.error("Download failed. Google Drive may be rate-limiting or access is restricted.")
+            st.stop()
+
         st.success("Model downloaded successfully ✅")
 
     # Show file size
-    try:
-        size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
-    except Exception:
-        size_mb = 0.0
-
+    size_mb = os.path.getsize(MODEL_PATH) / (1024 * 1024)
     st.write(f"Downloaded model size: **{size_mb:.2f} MB**")
 
-    # If download is HTML, delete and stop (forces fresh download after permission fix)
-    if looks_like_html(MODEL_PATH) or size_mb < 1.0:
+    # Validate
+    if size_mb < 5.0 or looks_like_html(MODEL_PATH):
+        # Bad download (HTML or tiny file). Delete and stop.
         try:
             os.remove(MODEL_PATH)
         except Exception:
             pass
 
         st.error(
-            "Downloaded file is HTML (Google Drive confirmation/permission page), not a real .joblib model.\n\n"
-            "✅ Fix:\n"
-            "1) Open the model file in Google Drive\n"
-            "2) Share → General access → set to **Anyone with the link (Viewer)**\n"
-            "3) Save, then reboot the Streamlit app"
+            "Downloaded file is not a valid model binary (looks like HTML or is too small).\n\n"
+            "Cause: Google Drive returned a confirmation/permission page.\n"
+            "Fix: Ensure the file is shared as 'Anyone with the link (Viewer)' and reboot."
         )
         st.stop()
 
-    # Try loading model
+    # Load model
     try:
         model = joblib.load(MODEL_PATH)
+        if not hasattr(model, "predict"):
+            st.error(f"Loaded object is not a trained model. Type: {type(model)}")
+            st.stop()
+
         st.success("Model loaded successfully ✅")
         return model
+
     except Exception as e:
-        st.error("joblib.load() failed while loading the model.")
+        st.error("joblib.load() failed (model may be incompatible with current sklearn version).")
         st.code(repr(e))
         st.stop()
 
@@ -244,3 +213,4 @@ if st.button("Evaluate Price 🚀"):
         st.error("Prediction failed. This usually means the model expects different input columns.")
         st.code(str(e))
         st.stop()
+
